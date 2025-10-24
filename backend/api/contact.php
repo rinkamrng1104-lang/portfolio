@@ -2,29 +2,19 @@
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: POST");
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
-require __DIR__ . '/vendor/autoload.php';
-
-// プリフライト(OPTIONS)リクエストは終了
+// ✅ プリフライト(OPTIONS)なら処理終了
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
 }
 
 try {
-    // -----------------------------
-    // DB接続
-    // -----------------------------
     $pdo = new PDO("mysql:host=localhost;dbname=portfolio;charset=utf8", "root", "");
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // -----------------------------
-    // JSONデータ取得
-    // -----------------------------
+    // JSON取得
     $data = json_decode(file_get_contents('php://input'), true);
 
     $name = $data["name"] ?? "";
@@ -36,11 +26,12 @@ try {
     $topicsArray = $data["topics"] ?? [];
     $message = $data["message"] ?? "";
 
+    // 配列 → 文字列 ("HP作成, LP作成" のような形式)
     $topics = implode(", ", $topicsArray);
 
-    // -----------------------------
-    // ID採番（トランザクション + FOR UPDATE）
-    // -----------------------------
+    // ----------------------------------
+    // ✅ ID 採番（トランザクション + FOR UPDATE）
+    // ----------------------------------
     $pdo->beginTransaction();
 
     $stmt = $pdo->query("SELECT id FROM contacts ORDER BY id DESC LIMIT 1 FOR UPDATE");
@@ -49,16 +40,19 @@ try {
     if (!$row) {
         $newId = "00000001";
     } else {
-        $newId = str_pad((string)(intval($row["id"]) + 1), 8, "0", STR_PAD_LEFT);
+        $currentIdNum = intval($row["id"]);
+        $newIdNum = $currentIdNum + 1;
+        $newId = str_pad((string)$newIdNum, 8, "0", STR_PAD_LEFT);
     }
 
-    // -----------------------------
-    // DB INSERT
-    // -----------------------------
+    // ----------------------------------
+    // ✅ INSERT
+    // ----------------------------------
     $sql = "INSERT INTO contacts 
             (id, name, furigana, gender, email, tel, inquiryType, topics, message, created_at)
             VALUES 
             (:id, :name, :furigana, :gender, :email, :tel, :inquiryType, :topics, :message, NOW())";
+
     $stmt = $pdo->prepare($sql);
     $stmt->execute([
         ":id" => $newId,
@@ -74,50 +68,11 @@ try {
 
     $pdo->commit();
 
+    echo json_encode(["status" => "success", "message" => "送信が完了しました。"]);
+    exit;
+
 } catch (Exception $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
-    echo json_encode(["status" => "error", "message" => "DB登録エラー: " . $e->getMessage()]);
+    echo json_encode(["status" => "error", "message" => $e->getMessage()]);
     exit;
 }
-
-// -----------------------------
-// メール送信
-// -----------------------------
-try {
-    $mail = new PHPMailer(true);
-    $mail->SMTPDebug = 0; // 0=出力なし、2=デバッグ
-    $mail->isSMTP();
-    $mail->Host = 'smtp.gmail.com';
-    $mail->SMTPAuth = true;
-    $mail->Username = 'rinka.mrng1104@gmail.com';
-    $mail->Password = 'nrjk myga ekdo mkzh';
-    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-    $mail->Port = 587;
-
-    $mail->setFrom('rinka.mrng1104@gmail.com', 'お問い合わせ通知');
-    $mail->addAddress('rinka.mrng1104@example.com');
-
-    $mail->Subject = "お問い合わせが届きました - {$name} 様";
-    $mail->Body = <<<EOT
-氏名: {$name}
-フリガナ: {$furigana}
-性別: {$gender}
-メール: {$email}
-電話番号: {$tel}
-お問い合わせ種別: {$inquiryType}
-相談対象: {$topics}
-メッセージ:
-{$message}
-EOT;
-
-    $mail->send();
-} catch (Exception $e) {
-    // 送信失敗はログに残すだけ
-    error_log("メール送信失敗: " . $mail->ErrorInfo);
-}
-
-// -----------------------------
-// 成功レスポンス
-// -----------------------------
-echo json_encode(["status" => "success", "message" => "送信が完了しました。"]);
-exit;
